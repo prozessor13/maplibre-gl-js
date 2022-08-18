@@ -12,7 +12,7 @@ import type {Source} from './source';
 import type Dispatcher from '../util/dispatcher';
 import type Tile from './tile';
 import type {Callback} from '../types/callback';
-import type {RasterDEMSourceSpecification} from '../style-spec/types';
+import type {RasterDEMSourceSpecification} from '../style-spec/types.g';
 
 class RasterDEMTileSource extends RasterTileSource implements Source {
     encoding: 'mapbox' | 'terrarium';
@@ -70,15 +70,16 @@ class RasterDEMTileSource extends RasterTileSource implements Source {
             }
         }
 
-        function done(err, dem) {
+        function done(err, data) {
             if (err) {
                 tile.state = 'errored';
                 callback(err);
             }
 
-            if (dem) {
-                tile.dem = dem;
+            if (data) {
+                tile.dem = data;
                 tile.needsHillshadePrepare = true;
+                tile.needsTerrainPrepare = true;
                 tile.state = 'loaded';
                 callback(null);
             }

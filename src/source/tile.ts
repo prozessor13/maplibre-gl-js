@@ -29,10 +29,11 @@ import type Framebuffer from '../gl/framebuffer';
 import type Transform from '../geo/transform';
 import type {LayerFeatureStates} from './source_state';
 import type {Cancelable} from '../types/cancelable';
-import type {FilterSpecification} from '../style-spec/types';
+import type {FilterSpecification} from '../style-spec/types.g';
 import type Point from '@mapbox/point-geometry';
 import {mat4} from 'gl-matrix';
 import type {VectorTileLayer} from '@mapbox/vector-tile';
+import {ExpiryData} from '../util/ajax';
 
 export type TileState = // Tile data is in the process of loading.
 'loading' | // Tile data has been loaded. Tile can be rendered.
@@ -64,6 +65,7 @@ class Tile {
     expiredRequestCount: number;
     state: TileState;
     timeAdded: any;
+    timeLoaded: any;
     fadeEndTime: any;
     collisionBoxArray: CollisionBoxArray;
     redoWhenDone: boolean;
@@ -74,8 +76,10 @@ class Tile {
 
     neighboringTiles: any;
     dem: DEMData;
+    demMatrix: mat4;
     aborted: boolean;
     needsHillshadePrepare: boolean;
+    needsTerrainPrepare: boolean;
     request: Cancelable;
     texture: any;
     fbo: Framebuffer;
@@ -89,6 +93,8 @@ class Tile {
     hasSymbolBuckets: boolean;
     hasRTLText: boolean;
     dependencies: any;
+    textures: Array<Texture>;
+    textureCoords: {[_: string]: string}; // remeber all coords rendered to textures
 
     /**
      * @param {OverscaledTileID} tileID
@@ -106,6 +112,8 @@ class Tile {
         this.hasSymbolBuckets = false;
         this.hasRTLText = false;
         this.dependencies = {};
+        this.textures = [];
+        this.textureCoords = {};
 
         // Counts the number of times a response was already expired when
         // received. We're using this to add a delay when making a new request
@@ -126,6 +134,14 @@ class Tile {
 
     wasRequested() {
         return this.state === 'errored' || this.state === 'loaded' || this.state === 'reloading';
+    }
+
+    clearTextures(painter: any) {
+        if (this.demTexture) painter.saveTileTexture(this.demTexture);
+        this.textures.forEach(t => painter.saveTileTexture(t));
+        this.demTexture = null;
+        this.textures = [];
+        this.textureCoords = {};
     }
 
     /**
@@ -340,7 +356,7 @@ class Tile {
         return this.imageAtlas && !!Object.keys(this.imageAtlas.patternPositions).length;
     }
 
-    setExpiryData(data: any) {
+    setExpiryData(data: ExpiryData) {
         const prior = this.expirationTime;
 
         if (data.cacheControl) {

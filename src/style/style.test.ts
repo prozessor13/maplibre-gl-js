@@ -15,7 +15,7 @@ import {OverscaledTileID} from '../source/tile_id';
 import {fakeXhr, fakeServer} from 'nise';
 import {WorkerGlobalScopeInterface} from '../util/web_worker';
 import EvaluationParameters from './evaluation_parameters';
-import {LayerSpecification, GeoJSONSourceSpecification, FilterSpecification, SourceSpecification} from '../style-spec/types';
+import {LayerSpecification, GeoJSONSourceSpecification, FilterSpecification, SourceSpecification} from '../style-spec/types.g';
 import {SourceClass} from '../source/source';
 import GeoJSONSource from '../source/geojson_source';
 
@@ -379,10 +379,26 @@ describe('Style#loadJSON', () => {
             style._layers.background.fire(new Event('error', {mapLibre: true}));
         });
     });
+
+    test('sets terrain if defined', (done) => {
+        const map = getStubMap();
+        const style = new Style(map);
+        map.transform.updateElevation = jest.fn();
+        style.loadJSON(createStyleJSON({
+            sources: {'source-id': createGeoJSONSource()},
+            terrain: {source: 'source-id', exaggeration: 0.33}
+        }));
+
+        style.on('style.load', () => {
+            expect(style.terrain).toBeDefined();
+            expect(map.transform.updateElevation).toHaveBeenCalled();
+            done();
+        });
+    });
 });
 
 describe('Style#_remove', () => {
-    test('clears tiles', done => {
+    test('removes cache sources and clears their tiles', done => {
         const style = new Style(getStubMap());
         style.loadJSON(createStyleJSON({
             sources: {'source-id': createGeoJSONSource()}
@@ -390,9 +406,16 @@ describe('Style#_remove', () => {
 
         style.on('style.load', () => {
             const sourceCache = style.sourceCaches['source-id'];
+            jest.spyOn(sourceCache, 'setEventedParent');
+            jest.spyOn(sourceCache, 'onRemove');
             jest.spyOn(sourceCache, 'clearTiles');
+
             style._remove();
-            expect(sourceCache.clearTiles).toHaveBeenCalledTimes(1);
+
+            expect(sourceCache.setEventedParent).toHaveBeenCalledWith(null);
+            expect(sourceCache.onRemove).toHaveBeenCalledWith(style.map);
+            expect(sourceCache.clearTiles).toHaveBeenCalled();
+
             done();
         });
     });
@@ -860,7 +883,7 @@ describe('Style#addLayer', () => {
                 'type': 'geojson',
                 'data': {
                     'type': 'Point',
-                    'coordinates': [ 0, 0]
+                    'coordinates': [0, 0]
                 }
             };
             const layer = {id: 'inline-source-layer', type: 'circle', source} as any as LayerSpecification;
@@ -1878,7 +1901,7 @@ describe('Style#queryRenderedFeatures', () => {
                 errors++;
             }
         });
-        style.queryRenderedFeatures([{x: 0, y: 0}], {layers:'string'}, transform);
+        style.queryRenderedFeatures([{x: 0, y: 0}], {layers: 'string'}, transform);
         expect(errors).toBe(1);
     });
 
@@ -1916,7 +1939,7 @@ describe('Style#queryRenderedFeatures', () => {
         jest.spyOn(style, 'fire').mockImplementation((event) => {
             if (event['error'] && event['error'].message.includes('does not exist in the map\'s style and cannot be queried for features.')) errors++;
         });
-        const results = style.queryRenderedFeatures([{x: 0, y: 0}], {layers:['merp']}, transform);
+        const results = style.queryRenderedFeatures([{x: 0, y: 0}], {layers: ['merp']}, transform);
         expect(errors).toBe(1);
         expect(results).toHaveLength(0);
     });

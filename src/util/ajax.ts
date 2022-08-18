@@ -1,6 +1,5 @@
 import {extend, warnOnce, isWorker} from './util';
 import config from './config';
-import assert from 'assert';
 import {cacheGet, cachePut} from './tile_request_cache';
 import webpSupported from './webp_supported';
 
@@ -316,7 +315,7 @@ function sameOrigin(url) {
 
 const transparentPngUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQYV2NgAAIAAAUAAarVyFEAAAAASUVORK5CYII=';
 
-function arrayBufferToImage(data: ArrayBuffer, callback: (err?: Error | null, image?: HTMLImageElement | null) => void, cacheControl?: string | null, expires?: string | null) {
+function arrayBufferToImage(data: ArrayBuffer, callback: (err?: Error | null, image?: HTMLImageElement | null) => void) {
     const img: HTMLImageElement = new Image();
     img.onload = () => {
         callback(null, img);
@@ -329,8 +328,6 @@ function arrayBufferToImage(data: ArrayBuffer, callback: (err?: Error | null, im
     };
     img.onerror = () => callback(new Error('Could not load image. Please make sure to use a supported image type such as PNG or JPEG. Note that SVGs are not supported.'));
     const blob: Blob = new Blob([new Uint8Array(data)], {type: 'image/png'});
-    (img as any).cacheControl = cacheControl;
-    (img as any).expires = expires;
     img.src = data.byteLength ? URL.createObjectURL(blob) : transparentPngUrl;
 }
 
@@ -343,12 +340,14 @@ function arrayBufferToImageBitmap(data: ArrayBuffer, callback: (err?: Error | nu
     });
 }
 
-function arrayBufferToCanvasImageSource(data: ArrayBuffer, callback: (err?: Error | null, image?: CanvasImageSource | null) => void, cacheControl?: string | null, expires?: string | null) {
+export type ExpiryData = {cacheControl?: string | null; expires?: Date | string | null};
+
+function arrayBufferToCanvasImageSource(data: ArrayBuffer, callback: Callback<CanvasImageSource>) {
     const imageBitmapSupported = typeof createImageBitmap === 'function';
     if (imageBitmapSupported) {
         arrayBufferToImageBitmap(data, callback);
     } else {
-        arrayBufferToImage(data, callback, cacheControl, expires);
+        arrayBufferToImage(data, callback);
     }
 }
 
@@ -359,9 +358,11 @@ export const resetImageRequestQueue = () => {
 };
 resetImageRequestQueue();
 
+export type GetImageCallback = (error?: Error | null, image?: HTMLImageElement | ImageBitmap | null, expiry?: ExpiryData | null) => void;
+
 export const getImage = function(
     requestParameters: RequestParameters,
-    callback: Callback<HTMLImageElement | ImageBitmap>
+    callback: GetImageCallback
 ): Cancelable {
     if (webpSupported.supported) {
         if (!requestParameters.headers) {
@@ -388,7 +389,7 @@ export const getImage = function(
         if (advanced) return;
         advanced = true;
         numImageRequests--;
-        assert(numImageRequests >= 0);
+
         while (imageQueue.length && numImageRequests < config.MAX_PARALLEL_IMAGE_REQUESTS) { // eslint-disable-line
             const request = imageQueue.shift();
             const {requestParameters, callback, cancelled} = request;
@@ -407,7 +408,14 @@ export const getImage = function(
         if (err) {
             callback(err);
         } else if (data) {
-            arrayBufferToCanvasImageSource(data, callback, cacheControl, expires);
+            const decoratedCallback = (imgErr?: Error | null, imgResult?: CanvasImageSource | null) => {
+                if (imgErr != null) {
+                    callback(imgErr);
+                } else if (imgResult != null) {
+                    callback(null, imgResult as (HTMLImageElement | ImageBitmap), {cacheControl, expires});
+                }
+            };
+            arrayBufferToCanvasImageSource(data, decoratedCallback);
         }
     });
 

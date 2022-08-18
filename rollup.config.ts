@@ -3,13 +3,11 @@ import sourcemaps from 'rollup-plugin-sourcemaps';
 import {plugins} from './build/rollup_plugins';
 import banner from './build/banner';
 import {RollupOptions} from 'rollup';
+import {importAssertions} from 'acorn-import-assertions';
 
-const {BUILD, MINIFY} = process.env;
-const minified = MINIFY === 'true';
+const {BUILD} = process.env;
 const production = BUILD === 'production';
-const outputFile =
-    !production ? 'dist/maplibre-gl-dev.js' :
-        minified ? 'dist/maplibre-gl.js' : 'dist/maplibre-gl-unminified.js';
+const outputFile = production ? 'dist/maplibre-gl.js' : 'dist/maplibre-gl-dev.js';
 
 const config: RollupOptions[] = [{
     // Before rollup you should run build-tsc to transpile from typescript to javascript (except when running rollup in watch mode)
@@ -28,7 +26,8 @@ const config: RollupOptions[] = [{
         chunkFileNames: 'shared.js'
     },
     treeshake: production,
-    plugins: plugins(minified, production)
+    acornInjectPlugins: [ importAssertions ],
+    plugins: plugins(production)
 }, {
     // Next, bundle together the three "chunks" produced in the previous pass
     // into a single, final bundle. See rollup/bundle_prelude.js and
