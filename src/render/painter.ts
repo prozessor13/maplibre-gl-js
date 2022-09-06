@@ -62,6 +62,7 @@ import type {DepthRangeType, DepthMaskType, DepthFuncType} from '../gl/types';
 import type ResolvedImage from '../style-spec/expression/types/resolved_image';
 import type {RGBAImage} from '../util/image';
 import RenderToTexture from './render_to_texture';
+import { HighlightSpanKind } from 'typescript';
 
 export type RenderPass = 'offscreen' | 'opaque' | 'translucent';
 
@@ -130,12 +131,15 @@ class Painter {
     // of the terrain-facilitators. e.g. depth & coords framebuffers
     // every time the camera-matrix changes the terrain-facilitators will be redrawn.
     terrainFacilitator: {dirty: boolean; matrix: mat4; renderTime: number};
+    // in case of terrain render layer to texture instead to screen
+    renderToTexture: RenderToTexture;
 
     constructor(gl: WebGLRenderingContext, transform: Transform) {
         this.context = new Context(gl);
         this.transform = transform;
         this._tileTextures = {};
         this.terrainFacilitator = {dirty: true, matrix: mat4.create(), renderTime: 0};
+        this.renderToTexture = null;
 
         this.setup();
 
@@ -378,7 +382,6 @@ class Painter {
 
         const layerIds = this.style._order;
         const sourceCaches = this.style.sourceCaches;
-        const renderToTexture = this.style.terrain && new RenderToTexture(this);
 
         for (const id in sourceCaches) {
             const sourceCache = sourceCaches[id];
@@ -407,7 +410,8 @@ class Painter {
             }
         }
 
-        if (renderToTexture) {
+        if (this.style.terrain) {
+            this.renderToTexture.initialize();
             // this is disabled, because render-to-texture is rendering all layers from bottom to top.
             this.opaquePassCutoff = 0;
 
@@ -450,7 +454,7 @@ class Painter {
 
         // Opaque pass ===============================================
         // Draw opaque layers top-to-bottom first.
-        if (!renderToTexture) {
+        if (!this.style.terrain) {
             this.renderPass = 'opaque';
 
             for (this.currentLayer = layerIds.length - 1; this.currentLayer >= 0; this.currentLayer--) {
@@ -471,7 +475,7 @@ class Painter {
             const layer = this.style._layers[layerIds[this.currentLayer]];
             const sourceCache = sourceCaches[layer.source];
 
-            if (renderToTexture && renderToTexture.renderLayer(layer)) continue;
+            if (this.style.terrain && this.renderToTexture.renderLayer(layer)) continue;
 
             // For symbol layers in the translucent pass, we add extra tiles to the renderable set
             // for cross-tile symbol fading. Symbol layers don't use tile clipping, so no need to render

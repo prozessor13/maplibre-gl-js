@@ -2,22 +2,29 @@ import Painter from './painter';
 import Tile from '../source/tile';
 import Color from '../style-spec/util/color';
 import {OverscaledTileID} from '../source/tile_id';
-import {prepareTerrain, drawTerrain} from './draw_terrain';
+import {drawTerrain} from './draw_terrain';
 import type StyleLayer from '../style/style_layer';
+import Texture from './texture';
+import type Framebuffer from '../gl/framebuffer';
+import { forceManyBody } from 'd3';
+import { getTextOfJSDocComment } from 'typescript';
 
 /**
  * RenderToTexture
  */
 export default class RenderToTexture {
     painter: Painter;
+    rttFBOs: Array<Framebuffer>;
+    rttTextures: Array<Texture>;
+    rttUsedFBOs: Array<boolean>;
     // this object holds a lookup table which layers should rendered to texture
     _renderToTexture: {[keyof in StyleLayer['type']]?: boolean};
     // coordsDescendingInv contains a list of all tiles which should be rendered for one render-to-texture tile
     // e.g. render 4 raster-tiles with size 256px to the 512px render-to-texture tile
-    _coordsDescendingInv: {[_: string]: {[_:string]: Array<OverscaledTileID>}} = {};
+    _coordsDescendingInv: {[_: string]: {[_:string]: Array<OverscaledTileID>}};
     // create a string representation of all to tiles rendered to render-to-texture tiles
     // this string representation is used to check if tile should be re-rendered.
-    _coordsDescendingInvStr: {[_: string]: {[_:string]: string}} = {};
+    _coordsDescendingInvStr: {[_: string]: {[_:string]: string}};
     // store for render-stacks
     // a render stack is a set of layers which should be rendered into one texture
     // every stylesheet can have multipe stacks. A new stack is created if layers which should
@@ -25,28 +32,26 @@ export default class RenderToTexture {
     _stacks: Array<Array<string>>;
     // remember the previous processed layer to check if a new stack is needed
     _prevType: string;
-    // create a lookup which tiles should rendered to texture
-    _rerender: {[_: string]: boolean};
     // a list of tiles that can potentially rendered
     _renderableTiles: Array<Tile>;
 
     constructor(painter: Painter) {
         this.painter = painter;
+        this.rttFBOs = [];
+        this.rttTextures = [];
         this._renderToTexture = {background: true, fill: true, line: true, raster: true};
-        this._coordsDescendingInv = {};
-        this._coordsDescendingInvStr = {};
-        this._stacks = [];
-        this._prevType = null;
-        this._rerender = {};
-        this._renderableTiles = painter.style.terrain.sourceCache.getRenderableTiles();
-        this._init();
     }
 
-    _init() {
+    initialize() {
         const style = this.painter.style;
         const terrain = style.terrain;
 
+        this._stacks = [];
+        this._prevType = null;
+        this._renderableTiles = terrain.sourceCache.getRenderableTiles();
+
         // fill _coordsDescendingInv
+        this._coordsDescendingInv = {};
         for (const id in style.sourceCaches) {
             this._coordsDescendingInv[id] = {};
             const tileIDs = style.sourceCaches[id].getVisibleCoordinates();
@@ -60,6 +65,7 @@ export default class RenderToTexture {
         }
 
         // fill _coordsDescendingInvStr
+        this._coordsDescendingInvStr = {};
         for (const id of style._order) {
             const layer = style._layers[id], source = layer.source;
             if (this._renderToTexture[layer.type]) {
@@ -71,21 +77,62 @@ export default class RenderToTexture {
             }
         }
 
-        // remove cached textures
+        // check tiles to render
+        this.rttUsedFBOs = [];
         this._renderableTiles.forEach(tile => {
             for (const source in this._coordsDescendingInvStr) {
                 // rerender if there are more coords to render than in the last rendering
                 const coords = this._coordsDescendingInvStr[source][tile.tileID.key];
-                if (coords && coords !== tile.textureCoords[source]) tile.clearTextures(this.painter);
+                if (coords && coords !== tile.rttCoords[source]) tile.rttFBOs = [];
                 // rerender if tile is marked for rerender
-                if (terrain.needsRerender(source, tile.tileID)) tile.clearTextures(this.painter);
+                if (terrain.needsRerender(source, tile.tileID)) tile.rttFBOs = [];
             }
-            this._rerender[tile.tileID.key] = !tile.textures.length;
+            // remove framebuffer from reusing, instead reuse texture for current render pass
+            for (const i of tile.rttFBOs) this.rttUsedFBOs[i] = true;
         });
         terrain.clearRerenderCache();
         terrain.sourceCache.removeOutdated(this.painter);
 
         return this;
+    }
+
+    getTexture(tile): Texture {
+        const stack = this._stacks.length - 1;
+        return this.rttTextures[tile.rttFBOs[stack]];
+    }
+
+    getFBO(): number {
+        // check for free framebuffers
+        for (let i=0; i<this.rttFBOs.length; i++) {
+            if (!this.rttUsedFBOs[i]) {
+                this.rttUsedFBOs[i] = true;
+                return i;
+            }
+        }
+        // create new framebuffer
+        const context = this.painter.context;
+        const terrain = this.painter.style.terrain;
+        const size = terrain.sourceCache.tileSize * terrain.qualityFactor;
+        const fbo = context.createFramebuffer(size, size, true);
+        const texture = new Texture(context, {width: size, height: size, data: null}, context.gl.RGBA);
+        texture.bind(context.gl.LINEAR, context.gl.CLAMP_TO_EDGE);
+        fbo.depthAttachment.set(context.createRenderbuffer(context.gl.DEPTH_COMPONENT16, size, size));
+        fbo.colorAttachment.set(texture.texture);
+        this.rttFBOs.push(fbo);
+        this.rttTextures.push(texture);
+        return this.rttFBOs.length - 1;
+    }
+
+    prepareFBO(i: number) {
+        const fbo = this.rttFBOs[i];
+        this.painter.context.bindFramebuffer.set(fbo.framebuffer);
+        this.painter.context.viewport.set([0, 0, fbo.width, fbo.height]);
+        this.painter.context.clear({color: Color.transparent});
+    }
+
+    freeFBO(i: number) {
+        if (typeof(i) === "number") // check for null or undefined values
+            this.rttUsedFBOs[i] = false;
     }
 
     /**
@@ -118,33 +165,34 @@ export default class RenderToTexture {
         if (this._renderToTexture[this._prevType] || type === 'hillshade' || (this._renderToTexture[type] && isLastLayer)) {
             this._prevType = type;
             const stack = this._stacks.length - 1, layers = this._stacks[stack] || [];
-            for (const tile of this._renderableTiles) {
-                prepareTerrain(painter, painter.style.terrain, tile, stack);
-                if (this._rerender[tile.tileID.key]) {
-                    painter.context.clear({color: Color.transparent});
-                    for (let l = 0; l < layers.length; l++) {
-                        const layer = painter.style._layers[layers[l]];
-                        const coords = layer.source ? this._coordsDescendingInv[layer.source][tile.tileID.key] : [tile.tileID];
-                        painter._renderTileClippingMasks(layer, coords);
-                        painter.renderLayer(painter, painter.style.sourceCaches[layer.source], layer, coords);
-                        if (layer.source) tile.textureCoords[layer.source] = this._coordsDescendingInvStr[layer.source][tile.tileID.key];
-                    }
+            if (this._stacks.length) for (const tile of this._renderableTiles) {
+                if (tile.rttFBOs[stack]) continue; // layer is rendered in an previous pass
+                tile.rttFBOs[stack] = this.getFBO();
+                this.prepareFBO(tile.rttFBOs[stack]);
+                for (let l = 0; l < layers.length; l++) {
+                    const layer = painter.style._layers[layers[l]];
+                    const coords = layer.source ? this._coordsDescendingInv[layer.source][tile.tileID.key] : [tile.tileID];
+                    painter._renderTileClippingMasks(layer, coords);
+                    painter.renderLayer(painter, painter.style.sourceCaches[layer.source], layer, coords);
+                    if (layer.source) tile.rttCoords[layer.source] = this._coordsDescendingInvStr[layer.source][tile.tileID.key];
                 }
-                drawTerrain(painter, painter.style.terrain, tile);
             }
+            drawTerrain(this.painter, this, this._renderableTiles);
 
             // the hillshading layer is a special case because it changes on every camera-movement
             // so rerender it in any case.
             if (type === 'hillshade') {
                 this._stacks.push([layerIds[currentLayer]]);
+                const stack = this._stacks.length - 1;
                 for (const tile of this._renderableTiles) {
+                    this.freeFBO(tile.rttFBOs[stack]);
+                    tile.rttFBOs[stack] = this.getFBO();
+                    this.prepareFBO(tile.rttFBOs[stack]);
                     const coords = this._coordsDescendingInv[layer.source][tile.tileID.key];
-                    prepareTerrain(painter, painter.style.terrain, tile, this._stacks.length - 1);
-                    painter.context.clear({color: Color.transparent});
                     painter._renderTileClippingMasks(layer, coords);
                     painter.renderLayer(painter, painter.style.sourceCaches[layer.source], layer, coords);
-                    drawTerrain(painter, painter.style.terrain, tile);
                 }
+                drawTerrain(this.painter, this, this._renderableTiles);
                 return true;
             }
 

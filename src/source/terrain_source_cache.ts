@@ -58,11 +58,6 @@ export default class TerrainSourceCache extends Evented {
     destruct() {
         this.sourceCache.usedForTerrain = false;
         this.sourceCache.tileSize = null;
-        for (const key in this._tiles) {
-            const tile = this._tiles[key];
-            tile.textures.forEach(t => t.destroy());
-            tile.textures = [];
-        }
     }
 
     /**

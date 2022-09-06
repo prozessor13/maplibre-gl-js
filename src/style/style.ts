@@ -62,6 +62,7 @@ import type {CustomLayerInterface} from './style_layer/custom_style_layer';
 import type {Validator} from './validate_style';
 import type {OverscaledTileID} from '../source/tile_id';
 import Terrain from '../render/terrain';
+import RenderToTexture from '../render/render_to_texture';
 
 const supportedDiffOperations = pick(diffOperations, [
     'addLayer',
@@ -508,6 +509,7 @@ class Style extends Evented {
             const sourceCache = this.sourceCaches[options.source];
             if (!sourceCache) throw new Error(`cannot load terrain, because there exists no source with ID: ${options.source}`);
             this.terrain = new Terrain(this, sourceCache, options);
+            this.map.painter.renderToTexture = new RenderToTexture(this.map.painter);
             this.map.transform.updateElevation(this.terrain);
             this._terrainfreezeElevationCallback = (e: any) => {
                 if (e.freeze) {

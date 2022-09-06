@@ -107,9 +107,6 @@ export default class Terrain {
     // as of overzooming of raster-dem tiles in high zoomlevels, this cache contains
     // matrices to transform from vector-tile coords to raster-dem-tile coords.
     _demMatrixCache: {[_: string]: { matrix: mat4; coord: OverscaledTileID }};
-    // because of overzooming raster-dem tiles this cache holds the corresponding
-    // framebuffer-object to render tiles to texture
-    _rttFramebuffer: Framebuffer;
     // loading raster-dem tiles foreach render-to-texture tile results in loading
     // a lot of terrain-dem tiles with very low visual advantage. So with this setting
     // remember all tiles which contains new data for a spezific source and tile-key.
@@ -240,20 +237,6 @@ export default class Terrain {
             depthTexture: (this._fboDepthTexture || this._emptyDepthTexture).texture,
             tile: sourceTile
         };
-    }
-
-    /**
-     * create the render-to-texture framebuffer
-     * @returns {Framebuffer} - the frame buffer
-     */
-    getRTTFramebuffer() {
-        const painter = this.style.map.painter;
-        if (!this._rttFramebuffer) {
-            const size = this.sourceCache.tileSize * this.qualityFactor;
-            this._rttFramebuffer = painter.context.createFramebuffer(size, size, true);
-            this._rttFramebuffer.depthAttachment.set(painter.context.createRenderbuffer(painter.context.gl.DEPTH_COMPONENT16, size, size));
-        }
-        return this._rttFramebuffer;
     }
 
     /**

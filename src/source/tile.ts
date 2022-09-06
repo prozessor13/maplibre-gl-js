@@ -93,8 +93,8 @@ class Tile {
     hasSymbolBuckets: boolean;
     hasRTLText: boolean;
     dependencies: any;
-    textures: Array<Texture>;
-    textureCoords: {[_: string]: string}; // remeber all coords rendered to textures
+    rttFBOs: Array<number>;
+    rttCoords: {[_: string]: string}; // remeber all coords rendered to textures
 
     /**
      * @param {OverscaledTileID} tileID
@@ -112,8 +112,8 @@ class Tile {
         this.hasSymbolBuckets = false;
         this.hasRTLText = false;
         this.dependencies = {};
-        this.textures = [];
-        this.textureCoords = {};
+        this.rttFBOs = [];
+        this.rttCoords = {};
 
         // Counts the number of times a response was already expired when
         // received. We're using this to add a delay when making a new request
@@ -138,10 +138,7 @@ class Tile {
 
     clearTextures(painter: any) {
         if (this.demTexture) painter.saveTileTexture(this.demTexture);
-        this.textures.forEach(t => painter.saveTileTexture(t));
         this.demTexture = null;
-        this.textures = [];
-        this.textureCoords = {};
     }
 
     /**
